@@ -1,0 +1,224 @@
+package main
+import (
+        "encoding/json"
+        "fmt"
+        "log"
+        "net/http"
+        "strings"
+        "database/sql"
+        _ "github.com/go-sql-driver/mysql"
+)
+
+const (
+    USERNAME = "root"
+    PASSWORD = "dxxxxxx"
+    NETWORK  = "tcp"
+    SERVER   = "192.168.221.135"
+    PORT     = 3306
+    DATABASE = "platform"
+)
+
+var db = &sql.DB{}
+
+type Rt struct {
+  Vips []string `json:"vip"`
+  VipMaps map[string]map[string][]string `json:"vipmaps"`
+}
+
+
+func Init(){
+    var err error
+    dsn := fmt.Sprintf("%s:%s@%s(%s:%d)/%s",USERNAME,PASSWORD,NETWORK,SERVER,PORT,DATABASE)
+    db, err = sql.Open("mysql", dsn)
+    if err != nil {
+        fmt.Printf("conect fail.")
+    }
+}
+
+func search2(_sql string,tag string) map[string]map[string][]string{
+    var (
+        rip []string
+        rp_vp []string
+        vmap map[string]map[string][]string
+        ips map[string][]string
+        port string
+        rs_port string
+        rs_ip string
+        )
+
+    vmap = make(map[string]map[string][]string)
+    ips = make(map[string][]string)
+    fmt.Println(_sql)
+    rows, err := db.Query(_sql)
+    if err != nil {
+        fmt.Printf("mysql query is failed.")
+        fmt.Println(err)
+        return vmap
+    }
+    fmt.Println(44444)
+    if tag=="channel"{
+        fmt.Println(2222)
+        set := make(map[string]bool)
+        for rows.Next(){
+            var vip string
+            if err = rows.Scan(&vip,&port,&rs_ip,&rs_port); err!=nil {
+            fmt.Println(err)
+            }
+
+            if _, ok := set[rs_ip]; !ok {
+                rip = append(rip, rs_ip)
+                set[rs_ip]=true
+            }
+
+            rp_vp = append(rp_vp, port+"-"+rs_port)
+            ips["rip"]=rip
+            ips["vport_rport"]=rp_vp
+            vmap[vip]=ips
+
+        }
+    }
+    fmt.Println(33333)
+    if err = rows.Err();err != nil{
+       fmt.Println(err)
+       return vmap
+    }
+    return vmap
+
+}
+
+func search(_sql string,tag string) []string{
+    var (
+        vips []string
+        )
+    fmt.Println(_sql)
+    rows, err := db.Query(_sql)
+    if err != nil {
+        fmt.Printf("mysql query is failed.")
+        fmt.Println(err)
+        return vips
+    }
+    fmt.Println(44444)
+    if tag=="viplist"{
+        for rows.Next(){
+            var vip string
+            if err = rows.Scan(&vip); err!=nil {
+            fmt.Println(err)
+            }
+            vips = append(vips, vip)
+        }
+    }
+
+    fmt.Println(33333)
+    if err = rows.Err();err != nil{
+       fmt.Println(err)
+       return vips
+    }
+    return vips
+
+}
+
+func GetVip(w http.ResponseWriter, r *http.Request) {
+    Init()
+    defer db.Close()
+    r.ParseForm()
+    var vipstr string
+    for k, v := range r.Form {
+        if k=="viplist"{
+            vipstr = strings.Join(v, ",")
+            break
+        }
+    }
+    iplist := strings.Split(vipstr,".")
+    ipstr := fmt.Sprintf("%s.%s.%s.%s",iplist[0],iplist[1],iplist[2],"%")
+    _sql := fmt.Sprintf("select vip from vip where vip like '%s'",ipstr)
+    vips :=search(_sql,"viplist")
+    var rt Rt
+    rt.Vips=vips
+    b,err :=  json.Marshal(rt.Vips)
+    if err!=nil{
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.Write(b)
+}
+
+func GetVportRport(w http.ResponseWriter, r *http.Request) {
+    Init()
+    defer db.Close()
+    var vipstr string
+    r.ParseForm()
+    for k, v := range r.Form {
+        if k=="vip"{
+            vipstr = strings.Join(v, ",")
+            break
+        }
+    }
+    iplist := strings.Split(vipstr,".")
+    ipstr := fmt.Sprintf("%s.%s.%s.%s",iplist[0],iplist[1],iplist[2],"%")
+    _sql := fmt.Sprintf("select ch.vip, ch.port,mp.rs_ip,mp.rs_port from channel ch inner join mapping mp " +
+        "on(ch.id=mp.channel_id)  where ch.status='enable' and ch.vip like '%s' group by ch.id,mp.rs_port",ipstr)
+    vips :=search2(_sql,"channel")
+    fmt.Println(3444444)
+    var rt Rt
+    rt.VipMaps=vips
+
+    b,err :=  json.Marshal(rt)
+    if err!=nil{
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.Write(b)
+}
+
+func Example(w http.ResponseWriter, r *http.Request) {
+    str:="{\"name\":\"mainCamera\",\"type\":\"camera\",\"visible\":\"1\",\"position\":\"0,5,70\",\"scale\":\"1,1,1\",\"rotation\":\"0,0,0\",\"children\":[],\"cameraNodeSuppl\":{\"fov\":56,\"zNear\":20.0,\"zFar\":1000.0,\"cameraDefaultLookAt\":{\"eyePos\":\"768,0,1536\",\"centerPos\":\"0,0,0\",\"upDirection\":\"0,1,0\"}}}"
+   myMap:=make(map[string]interface{})
+   json.Unmarshal([]byte(str),&myMap)
+   fmt.Println(myMap)
+   w.Header().Set("Content-Type", "application/json")
+   rt,err :=json.Marshal(myMap)
+   if err !=nil{
+       fmt.Println("json marshal fail")
+   }
+   w.Write(rt)
+}
+
+func ForMat(w http.ResponseWriter, r *http.Request){
+    const turl="http://127.0.0.1:8080/example"
+    resp, err := http.Get(turl)
+    if err != nil {
+        fmt.Println(err)
+    }
+    defer resp.Body.Close()
+    fmt.Println(resp.StatusCode)
+    result := make(map[string]interface{})
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Println(err)
+	}
+	w.Header().Set("Content-Type", "application/json")
+    result["type"]="jojo_test"
+    rt,err :=json.Marshal(result)
+    fmt.Println(result)
+    if err !=nil{
+       fmt.Println("json marshal fail")
+    }
+    w.Write(rt)
+
+}
+
+func main() {
+    fmt.Println("httpd server start,listen8080")
+    http.HandleFunc("/vip", GetVip)
+    http.HandleFunc("/vipmap", GetVportRport)
+    http.HandleFunc("/example", Example)
+    http.HandleFunc("/format", ForMat)
+
+    err := http.ListenAndServe("127.0.0.1:8080", nil)
+    if err != nil {
+            log.Fatal("ListenAndServe: ", err)
+    }
+}
